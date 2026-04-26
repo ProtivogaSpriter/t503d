@@ -1,0 +1,14 @@
+[Unit]
+Description=t503 tablet pseudodriver daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/sbin/t503d
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

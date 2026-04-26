@@ -1,0 +1,5 @@
+/home/EXEC/projects/rust/t503d/target/debug/build/libusb1-sys-3f29fa518c117fea/build_script_build-3f29fa518c117fea.d: /home/EXEC/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libusb1-sys-0.7.0/build.rs
+
+/home/EXEC/projects/rust/t503d/target/debug/build/libusb1-sys-3f29fa518c117fea/build_script_build-3f29fa518c117fea: /home/EXEC/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libusb1-sys-0.7.0/build.rs
+
+/home/EXEC/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libusb1-sys-0.7.0/build.rs:
