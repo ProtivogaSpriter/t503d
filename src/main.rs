@@ -499,8 +499,8 @@ fn main() {
     let conf = config(&fp,log.try_clone().unwrap());
     log.write_all(format!("Loaded Config: \n{:?}\n", conf).as_bytes());
 
-    //let daemonize = Daemonize::new().working_directory("/").umask(0o027);
-    //daemonize.start();
+    let daemonize = Daemonize::new().working_directory("/").umask(0o027);
+    daemonize.start();
 
     if !rusb::has_hotplug() {
         log.write_all(b"[ERR]:  daemon launch failure: rusb has no hotplug option.\n");
