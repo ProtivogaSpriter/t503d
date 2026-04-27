@@ -64,10 +64,16 @@ const VID: u16 = 0x08f2;
 const PID: u16 = 0x6811;
 const iface_num: u8 = 2;
 
+/*
 static x1: usize = 3; //5
 static x2: usize = 2; //4
 static y1: usize = 5; //3
 static y2: usize = 4; //2
+                      */
+static x1: usize = 5;
+static x2: usize = 4;
+static y1: usize = 3;
+static y2: usize = 2;
 
 /* ===== CONFIG ===== */
 
