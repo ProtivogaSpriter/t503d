@@ -60,12 +60,9 @@ use std::{
     path::Path
 };
 
-//const VID: u16 = 0x08f2;
-//const PID: u16 = 0x6811;
-const VID: u16 = 6700;
-const PID: u16 = 19946;
-//const iface_num: u8 = 2;
-const iface_num: u8 = 0;
+const VID: u16 = 0x08f2;
+const PID: u16 = 0x6811;
+const iface_num: u8 = 2;
 
 static x1: usize = 3; //5
 static x2: usize = 2; //4
