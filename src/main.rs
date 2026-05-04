@@ -2,6 +2,7 @@
 //a pseudodriver daemon for the drawing tablet
 //of the tenmoon variety
 //made in 4 days for a bar of chocolate
+//a.k.a. the crutch king
 #[allow(unused_must_use)]
 use nix::{
     unistd::Uid
@@ -29,6 +30,8 @@ use evdev::{
     EventType,
     InputEvent,
     KeyCode,
+    MiscCode,
+    PropType,
     KeyEvent,
     UinputAbsSetup
 };
@@ -45,7 +48,10 @@ use std::{
         Write, 
         Read
     },
-    time::Duration,
+    time::{
+        Instant,
+        Duration,
+    },
     fs::{
         File,
         create_dir_all
@@ -54,26 +60,25 @@ use std::{
     thread,
     sync::{
         RwLock,
-        Arc
+        Arc,
+        LazyLock
     },
     str::FromStr,
-    path::Path
+    path::Path,
+    vec::IntoIter,
 };
 
 const VID: u16 = 0x08f2;
 const PID: u16 = 0x6811;
 const iface_num: u8 = 2;
 
-/*
-static x1: usize = 3; //5
-static x2: usize = 2; //4
-static y1: usize = 5; //3
-static y2: usize = 4; //2
-                      */
-static x1: usize = 5;
-static x2: usize = 4;
-static y1: usize = 3;
-static y2: usize = 2;
+static axis: [[usize; 4]; 2] = [
+    [3, 2, 5, 4],
+    [5, 4, 3, 2],
+];
+
+static mut start_instant: LazyLock<Instant> = LazyLock::new(|| {Instant::now()});   //crutch
+const start_instant_cutoff: u128 = 10;
 
 /* ===== CONFIG ===== */
 
@@ -155,8 +160,8 @@ impl ConfParseable{
             vendor_id:  VID,
             product_id: PID,
             pen:        { ConfPen {
-                max_x: 4080,
-                max_y: 4080,
+                max_x: 4096,
+                max_y: 4096,
                 max_pressure: 2047,
                 resolution_x: 20,
                 resolution_y: 30,
@@ -276,10 +281,13 @@ impl<T: UsbContext + 'static> rusb::Hotplug<T> for HotPlugHandler {
         if let Ok(desc) = device.device_descriptor() {
             let vid = desc.vendor_id();
             let pid = desc.product_id();
+            let contime = unsafe{(*start_instant).elapsed().as_millis()};
             self.logger.write_all(b"device identity: VID: ");
             self.logger.write_all(vid.to_string().as_bytes());
             self.logger.write_all(b" PID: ");
             self.logger.write_all(pid.to_string().as_bytes());
+            self.logger.write_all(b" CT: ");
+            self.logger.write_all(contime.to_string().as_bytes());
             self.logger.write_all(b"\n");
             if vid == VID && pid == PID {
                 let mut logclone = self.logger.try_clone().unwrap();
@@ -309,6 +317,8 @@ impl HotPlugHandler {
 fn device_runner<T: UsbContext>(mut device: Device<T>, mut logger: File, cf: ConfUsable) -> rusb::Result<()>{
     
     logger.write_all(b"thread start\n");
+    thread::sleep(Duration::from_millis(3000));
+    logger.write_all(b"thread launch\n");
 
     let mut keys = AttributeSet::<KeyCode>::new();
     for i in &cf.actions{
@@ -316,22 +326,34 @@ fn device_runner<T: UsbContext>(mut device: Device<T>, mut logger: File, cf: Con
             keys.insert(*e);
         }
     }
-    keys.insert(KeyCode::BTN_TOUCH);
+    let mut buttons = AttributeSet::<KeyCode>::new();
+    buttons.insert(KeyCode::BTN_TOUCH);
+
+    let mut misc = AttributeSet::<MiscCode>::new();
+    misc.insert(MiscCode::MSC_SCAN);
+
+    let mut prop = AttributeSet::<PropType>::new();
+    prop.insert(PropType::POINTER);
 
     let abs_setup_x = AbsInfo::new(0, 0, cf.pen.max_x, 0, 0, 0);
     let abs_setup_y = AbsInfo::new(0, 0, cf.pen.max_y, 0, 0, 0);
+    let abs_setup_press = AbsInfo::new(0, 0, 255, 0, 0, 0);
 
     let mut virt = VirtualDeviceBuilder::new().unwrap()     //TODO
         .name("t503 virtual driver")
         .with_keys(&keys).unwrap()
+        .with_keys(&buttons).unwrap()
+        .with_msc(&misc).unwrap()
+        .with_properties(&prop).unwrap()
         .with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode::ABS_X, abs_setup_x)).unwrap()
         .with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode::ABS_Y, abs_setup_y)).unwrap()
+        .with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode::ABS_PRESSURE, abs_setup_press)).unwrap()
         .build()
         .unwrap();
 
     let mut touch_event: [KeyEvent; 2] = [KeyEvent::new(KeyCode(KeyCode::KEY_0.0), 0); 2];
-    touch_event[0] = KeyEvent::new(KeyCode(KeyCode::BTN_TOUCH.0), 1);
-    touch_event[1] = KeyEvent::new(KeyCode(KeyCode::BTN_TOUCH.0), 0);
+    touch_event[0] = KeyEvent::new(KeyCode(KeyCode::BTN_TOUCH.0), 0);
+    touch_event[1] = KeyEvent::new(KeyCode(KeyCode::BTN_TOUCH.0), 1);
 
     let mut config = device.active_config_descriptor()?;
     let mut iface = match config.interfaces().nth(iface_num as usize) {
@@ -356,19 +378,23 @@ fn device_runner<T: UsbContext>(mut device: Device<T>, mut logger: File, cf: Con
     let y_per = cf.map.y_per / 100;
     let x_off = cf.map.x_off * cf.pen.max_x / 100;
     let y_off = cf.map.y_off * cf.pen.max_y / 100;
+    let x1 = axis[(cf.settings.swap_axis as usize)][0];
+    let x2 = axis[(cf.settings.swap_axis as usize)][1];
+    let y1 = axis[(cf.settings.swap_axis as usize)][2];
+    let y2 = axis[(cf.settings.swap_axis as usize)][3];
 
     let mut buffer: [u8; 8] = [1; 8];
     loop{
         buffer.fill(0);
         let anything = match handle.read_bulk(endpoint.address(), &mut buffer, Duration::from_millis(0)) {
-            Err(_) => {break;}
             Ok(data) => {data}
+            Err(_) => {break;}
         };
         if anything != 0 {
             logger.write_all(&format!("bytelength: {:?}\nbuffer: {:?}\n", anything, buffer).as_bytes());
             if buffer[0] == 2 { //buttons
                 logger.write_all(b"button press registered\n");
-                let mut event_code = 6;
+                let mut event_code = 0;
                 let mut pressed = 1;
                 if      buffer[1] == 2 {    //btn 1
                     event_code = 0;
@@ -391,8 +417,13 @@ fn device_runner<T: UsbContext>(mut device: Device<T>, mut logger: File, cf: Con
                 else {
                     pressed = 0;
                 }
-                if event_code != 6 { 
-                    for e in cf.actions[event_code].clone(){
+                if pressed != 0 {
+                    for e in cf.actions[event_code].clone() {
+                        virt.emit(&[*KeyEvent::new(e, pressed)]).unwrap();
+                    }
+                }
+                else {
+                    for e in &keys.clone() {        //gigacrutch, but what can i do? the data is ass (no keycodes, just release data.)
                         virt.emit(&[*KeyEvent::new(e, pressed)]).unwrap();
                     }
                 }
@@ -405,9 +436,8 @@ fn device_runner<T: UsbContext>(mut device: Device<T>, mut logger: File, cf: Con
                 let pen_x_event =           InputEvent::new_now(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_X.0, pen_x); 
                 let pen_y_event =           InputEvent::new_now(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_Y.0, pen_y);
                 let pen_pressure_event =    InputEvent::new_now(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_PRESSURE.0, pen_pressure);
-                virt.emit(&[pen_x_event, pen_y_event, pen_pressure_event, *touch_event[(buffer[1] - 192) as usize]]).unwrap();
+                virt.emit(&[pen_pressure_event, pen_x_event, pen_y_event, *touch_event[(buffer[1] - 192) as usize]]).unwrap();
             }
-
         }
     }
 
@@ -461,7 +491,7 @@ fn parse_to_keycode(data: String) -> Result<Vec<KeyCode>, ()> {
 
 /* ===== OTHER ===== */
 
-fn enter_context(mut context: Context, mut log: File, config: ConfUsable) -> rusb::Result<()>{
+fn enter_context(mut context: Context, mut log: File, mut config: ConfUsable) -> rusb::Result<()>{
 
     //handles signals
     signal_handler();
@@ -499,7 +529,7 @@ fn main() {
 
     let mut fp = String::from("/etc/t503d/conf.yaml");
 
-    let conf = config(&fp,log.try_clone().unwrap());
+    let mut conf = config(&fp,log.try_clone().unwrap());
     log.write_all(format!("Loaded Config: \n{:?}\n", conf).as_bytes());
 
     let daemonize = Daemonize::new().working_directory("/").umask(0o027);
